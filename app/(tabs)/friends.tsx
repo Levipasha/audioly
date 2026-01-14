@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, Image, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -11,16 +11,26 @@ import { API_BASE_URL } from '@/constants/api';
 type UserListItem = {
   id: string;
   name: string;
-  email: string;
+  username?: string;
+  profileImage?: {
+    url?: string;
+  };
   isPrivate: boolean;
   isFriend: boolean;
   sentRequest: boolean;
   incomingRequest: boolean;
+  songsCount?: number;
 };
 
 type FriendsData = {
-  friends: { _id: string; name: string; email: string; isPrivate: boolean }[];
-  incomingRequests: { _id: string; name: string; email: string; isPrivate: boolean }[];
+  friends: { _id: string; name: string; username?: string; profileImage?: { url?: string }; isPrivate: boolean }[];
+  incomingRequests: {
+    _id: string;
+    name: string;
+    username?: string;
+    profileImage?: { url?: string };
+    isPrivate: boolean;
+  }[];
 };
 
 type Mode = 'users' | 'friends';
@@ -33,6 +43,10 @@ export default function FriendsScreen() {
   const [friends, setFriends] = useState<FriendsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // State for search
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Load token once at mount
   useEffect(() => {
@@ -71,19 +85,21 @@ export default function FriendsScreen() {
   const authHeaders = () =>
     accessToken
       ? {
-          Authorization: `Bearer ${accessToken}`,
-        }
+        Authorization: `Bearer ${accessToken}`,
+      }
       : undefined;
 
-  const loadUsers = async () => {
-    if (!accessToken) {
-      setError('Log in on Profile to see users.');
-      return;
-    }
+  const loadUsers = useCallback(async (query: string = '') => {
+    // Note: Removed accessToken check to allow public searching
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`${API_BASE_URL}/users`, {
+
+      const url = query
+        ? `${API_BASE_URL}/users?q=${encodeURIComponent(query)}`
+        : `${API_BASE_URL}/users?limit=500`;
+
+      const res = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
           ...(authHeaders() ?? {}),
@@ -100,7 +116,7 @@ export default function FriendsScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accessToken]); // dependency on accessToken to refresh friend status if login changes
 
   const loadFriends = async () => {
     if (!accessToken) {
@@ -118,7 +134,12 @@ export default function FriendsScreen() {
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.message || 'Failed to load friends');
+        // If token is invalid / expired, guide user to log in again
+        if (res.status === 401 || json.message === 'Invalid token') {
+          setError('Log in on Profile before viewing your friends.');
+        } else {
+          setError(json.message || 'Failed to load friends');
+        }
         return;
       }
       setFriends(json);
@@ -129,13 +150,32 @@ export default function FriendsScreen() {
     }
   };
 
+  // Debounced search effect
   useEffect(() => {
     if (mode === 'users') {
-      void loadUsers();
-    } else {
+      const timer = setTimeout(() => {
+        void loadUsers(searchQuery);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [mode, searchQuery, loadUsers]);
+
+  // Initial load for friends mode
+  useEffect(() => {
+    if (mode === 'friends') {
       void loadFriends();
     }
   }, [mode, accessToken]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    if (mode === 'users') {
+      await loadUsers(searchQuery);
+    } else {
+      await loadFriends();
+    }
+    setRefreshing(false);
+  };
 
   const sendRequest = async (userId: string) => {
     if (!accessToken) return;
@@ -146,7 +186,7 @@ export default function FriendsScreen() {
           ...(authHeaders() ?? {}),
         },
       });
-      void loadUsers();
+      void loadUsers(searchQuery);
     } catch {
       // ignore
     }
@@ -162,7 +202,7 @@ export default function FriendsScreen() {
         },
       });
       void loadFriends();
-      void loadUsers();
+      void loadUsers(searchQuery);
     } catch {
       // ignore
     }
@@ -184,34 +224,52 @@ export default function FriendsScreen() {
       actionLabel = item.isPrivate ? 'Request' : 'Add friend';
     }
 
+    // Only show action buttons if logged in
+    const showActions = !!accessToken;
+
     return (
       <TouchableOpacity
         style={styles.row}
         onPress={() => router.push({ pathname: '/user/[userId]', params: { userId: item.id } })}
       >
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{item.name[0]?.toUpperCase()}</Text>
-        </View>
+        {item.profileImage?.url ? (
+          <Image source={{ uri: item.profileImage.url }} style={styles.avatarImage} />
+        ) : (
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{item.name[0]?.toUpperCase()}</Text>
+          </View>
+        )}
         <View style={styles.rowMain}>
-          <ThemedText type="defaultSemiBold">{item.name}</ThemedText>
-          <ThemedText style={styles.email}>{item.email}</ThemedText>
-          <ThemedText style={styles.privacy}>
-            {item.isPrivate ? 'Private account' : 'Public account'}
+          <ThemedText type="defaultSemiBold">
+            {item.username ? `@${item.username}` : item.name}
           </ThemedText>
+          <View style={styles.metaRow}>
+            {item.songsCount !== undefined && (
+              <ThemedText style={styles.songCountLabel}>
+                {item.songsCount} {item.songsCount === 1 ? 'song' : 'songs'}
+              </ThemedText>
+            )}
+            {item.songsCount !== undefined && <ThemedText style={styles.dotSeparator}>•</ThemedText>}
+            <ThemedText style={styles.privacy}>
+              {item.isPrivate ? 'Private' : 'Public'}
+            </ThemedText>
+          </View>
         </View>
-        <TouchableOpacity
-          disabled={disabled}
-          style={[styles.chip, disabled && styles.chipDisabled]}
-          onPress={() => {
-            if (item.incomingRequest && !item.isFriend) {
-              void acceptRequest(item.id);
-            } else if (!disabled) {
-              void sendRequest(item.id);
-            }
-          }}
-        >
-          <Text style={styles.chipText}>{actionLabel}</Text>
-        </TouchableOpacity>
+        {showActions && (
+          <TouchableOpacity
+            disabled={disabled}
+            style={[styles.chip, disabled && styles.chipDisabled]}
+            onPress={() => {
+              if (item.incomingRequest && !item.isFriend) {
+                void acceptRequest(item.id);
+              } else if (!disabled) {
+                void sendRequest(item.id);
+              }
+            }}
+          >
+            <Text style={styles.chipText}>{actionLabel}</Text>
+          </TouchableOpacity>
+        )}
       </TouchableOpacity>
     );
   };
@@ -224,52 +282,56 @@ export default function FriendsScreen() {
         <ThemedText type="subtitle" style={styles.sectionTitle}>
           Friends
         </ThemedText>
-        <FlatList
-          data={friends.friends}
-          keyExtractor={(item) => item._id}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.row}
-              onPress={() => router.push({ pathname: '/user/[userId]', params: { userId: item._id } })}
-            >
+        {friends.friends.map((item) => (
+          <TouchableOpacity
+            key={item._id}
+            style={styles.row}
+            onPress={() => router.push({ pathname: '/user/[userId]', params: { userId: item._id } })}
+          >
+            {item.profileImage?.url ? (
+              <Image source={{ uri: item.profileImage.url }} style={styles.avatarImage} />
+            ) : (
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{item.name[0]?.toUpperCase()}</Text>
               </View>
-              <View style={styles.rowMain}>
-                <ThemedText type="defaultSemiBold">{item.name}</ThemedText>
-                <ThemedText style={styles.email}>{item.email}</ThemedText>
-              </View>
-            </TouchableOpacity>
-          )}
-        />
+            )}
+            <View style={styles.rowMain}>
+              <ThemedText type="defaultSemiBold">
+                {item.username ? `@${item.username}` : item.name}
+              </ThemedText>
+            </View>
+          </TouchableOpacity>
+        ))}
 
         <ThemedText type="subtitle" style={styles.sectionTitle}>
           Incoming requests
         </ThemedText>
-        <FlatList
-          data={friends.incomingRequests}
-          keyExtractor={(item) => item._id}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.row}
-              onPress={() => router.push({ pathname: '/user/[userId]', params: { userId: item._id } })}
-            >
+        {friends.incomingRequests.map((item) => (
+          <TouchableOpacity
+            key={item._id}
+            style={styles.row}
+            onPress={() => router.push({ pathname: '/user/[userId]', params: { userId: item._id } })}
+          >
+            {item.profileImage?.url ? (
+              <Image source={{ uri: item.profileImage.url }} style={styles.avatarImage} />
+            ) : (
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{item.name[0]?.toUpperCase()}</Text>
               </View>
-              <View style={styles.rowMain}>
-                <ThemedText type="defaultSemiBold">{item.name}</ThemedText>
-                <ThemedText style={styles.email}>{item.email}</ThemedText>
-              </View>
-              <TouchableOpacity
-                style={styles.chip}
-                onPress={() => void acceptRequest(item._id)}
-              >
-                <Text style={styles.chipText}>Accept</Text>
-              </TouchableOpacity>
+            )}
+            <View style={styles.rowMain}>
+              <ThemedText type="defaultSemiBold">
+                {item.username ? `@${item.username}` : item.name}
+              </ThemedText>
+            </View>
+            <TouchableOpacity
+              style={styles.chip}
+              onPress={() => void acceptRequest(item._id)}
+            >
+              <Text style={styles.chipText}>Accept</Text>
             </TouchableOpacity>
-          )}
-        />
+          </TouchableOpacity>
+        ))}
       </>
     );
   };
@@ -277,17 +339,42 @@ export default function FriendsScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => setMode('users')}>
-          <ThemedText style={[styles.tabText, mode === 'users' && styles.tabActive]}>
-            Users
-          </ThemedText>
+        <TouchableOpacity
+          onPress={() => setMode('users')}
+          style={styles.tabButton}
+        >
+          <View style={[styles.tabContent, mode === 'users' && styles.tabContentActive]}>
+            {mode === 'users' && <View style={styles.circleIndicator} />}
+            <ThemedText style={[styles.tabText, mode === 'users' && styles.tabActive]}>
+              Users
+            </ThemedText>
+          </View>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setMode('friends')}>
-          <ThemedText style={[styles.tabText, mode === 'friends' && styles.tabActive]}>
-            Friends & Requests
-          </ThemedText>
+        <TouchableOpacity
+          onPress={() => setMode('friends')}
+          style={styles.tabButton}
+        >
+          <View style={[styles.tabContent, mode === 'friends' && styles.tabContentActive]}>
+            {mode === 'friends' && <View style={styles.circleIndicator} />}
+            <ThemedText style={[styles.tabText, mode === 'friends' && styles.tabActive]}>
+              Community & Requests
+            </ThemedText>
+          </View>
         </TouchableOpacity>
       </View>
+
+      {/* Search Input for Users Mode */}
+      {mode === 'users' && (
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search users..."
+            placeholderTextColor="#9ca3af"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </View>
+      )}
 
       {loading ? (
         <View style={styles.center}>
@@ -303,9 +390,20 @@ export default function FriendsScreen() {
           keyExtractor={(item) => item.id}
           renderItem={renderUser}
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#ffffff" />
+          }
         />
       ) : (
-        <View style={styles.list}>{renderFriends()}</View>
+        <ScrollView
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#ffffff" />
+          }
+        >
+          {renderFriends()}
+        </ScrollView>
       )}
     </ThemedView>
   );
@@ -321,7 +419,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 24,
+    marginTop: 20,
     marginBottom: 8,
+  },
+  tabButton: {
+    position: 'relative',
+  },
+  tabContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#6b7280',
+  },
+  tabContentActive: {
+    backgroundColor: '#3b82f6',
+    borderColor: '#3b82f6',
+    borderWidth: 2,
+  },
+  circleIndicator: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#ffffff',
+    marginRight: 8,
+    borderWidth: 2,
+    borderColor: '#93c5fd',
   },
   tabText: {
     opacity: 0.6,
@@ -329,6 +456,7 @@ const styles = StyleSheet.create({
   tabActive: {
     opacity: 1,
     fontWeight: '700',
+    color: '#ffffff',
   },
   center: {
     flex: 1,
@@ -342,17 +470,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#333',
+    borderBottomWidth: 1,
+    borderBottomColor: '#374151', // More visible border
   },
   avatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#ffffff11',
+    backgroundColor: '#1f2937', // Lighter background
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+    borderWidth: 2, // Add border for visibility
+    borderColor: '#3b82f6', // Blue border to stand out
+  },
+  avatarImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+    borderWidth: 2, // Add border to images too
+    borderColor: '#3b82f6', // Blue border
   },
   avatarText: {
     color: '#ffffff',
@@ -363,17 +501,17 @@ const styles = StyleSheet.create({
   },
   email: {
     fontSize: 12,
-    opacity: 0.8,
+    opacity: 0,
   },
   privacy: {
-    fontSize: 11,
-    opacity: 0.7,
-    marginTop: 2,
+    fontSize: 12,
+    color: '#9ca3af',
   },
   chip: {
     borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#4b5563',
+    borderWidth: 1.5,
+    borderColor: '#60a5fa', // Brighter blue border
+    backgroundColor: '#1e3a8a', // Dark blue background
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
@@ -381,12 +519,44 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   chipText: {
-    color: '#e5e7eb',
+    color: '#ffffff', // Pure white for better contrast
     fontSize: 12,
+    fontWeight: '600', // Bolder text
   },
   sectionTitle: {
     marginTop: 12,
     marginBottom: 4,
+  },
+  listContent: {
+    paddingBottom: 20,
+  },
+  searchContainer: {
+    marginBottom: 16,
+    paddingHorizontal: 8,
+  },
+  searchInput: {
+    backgroundColor: '#1f2937',
+    color: '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  songCountLabel: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+  dotSeparator: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginHorizontal: 2,
   },
 });
 

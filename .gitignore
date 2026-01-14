@@ -38,6 +38,6 @@ yarn-error.*
 
 app-example
 
-# generated native folders
-/ios
+# generated native folders (using CNG/Prebuild)
 /android
+/ios
