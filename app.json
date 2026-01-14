@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/audioly.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "scheme": "audiloly",
     "ios": {
       "supportsTablet": true,
