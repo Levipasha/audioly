@@ -4,14 +4,17 @@ import React, { useEffect } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import TrackPlayer, { useProgress } from 'react-native-track-player';
+import { isTrackPlayerAvailable } from './lazy-track-player';
 import { useNowPlaying } from './now-playing-context';
+import { reset as resetPlayer, useProgressSafe } from './track-player-service';
 
 export function NowPlayingBar() {
   const { nowPlaying, setNowPlaying, togglePlayPause, playNext, playPrev } = useNowPlaying();
   const router = useRouter();
-  const { position, duration } = useProgress();
+  const { position, duration } = useProgressSafe(250);
   const insets = useSafeAreaInsets();
+
+  if (!isTrackPlayerAvailable() || !nowPlaying) return null;
 
   // Calculate bottom position based on tab bar height + safe area
   // Standard tab bar base height is ~49px on iOS, ~56px on Android
@@ -39,7 +42,7 @@ export function NowPlayingBar() {
   const handleClose = async (e: any) => {
     e.stopPropagation();
     try {
-      await TrackPlayer.reset();
+      await resetPlayer();
       setNowPlaying(null);
     } catch (error) {
       console.error('Error closing player:', error);

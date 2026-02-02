@@ -15,14 +15,11 @@ import {
 } from 'react-native';
 // import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Event, useTrackPlayerEvents } from 'react-native-track-player';
-
-import { useProgress } from 'react-native-track-player';
+import { Event, seekTo, useProgressSafe, useTrackPlayerEventsSafe } from '../../components/track-player-service';
 import { CassetteGridItem } from '../../components/CassetteGridItem';
 import { CassetteModal } from '../../components/CassetteModal';
 import { parseArtistTitle, useNowPlaying } from '../../components/now-playing-context';
 import { usePlaylist } from '../../components/playlist-context';
-import { seekTo } from '../../components/track-player-service';
 import { getCachedTracks } from '../../services/local-music-cache';
 import { getCassetteColor } from '../../utils/colors';
 
@@ -88,7 +85,7 @@ export default function PlayerScreen() {
     const progressBarRef = useRef<View>(null);
     const flatListRef = useRef<FlatList>(null);
 
-    const { position, duration } = useProgress(250);
+    const { position, duration } = useProgressSafe(250);
 
     // Store current duration and position in refs so PanResponder can access latest values
     const durationRef = useRef(duration);
@@ -183,12 +180,12 @@ export default function PlayerScreen() {
         }
     }, [position, duration, playNext, isDragging]);
 
-    // Also listen for TrackPlayer events as backup
-    useTrackPlayerEvents([Event.PlaybackQueueEnded, Event.PlaybackTrackChanged], async (event) => {
-        if (event.type === Event.PlaybackQueueEnded) {
+    // Also listen for TrackPlayer events as backup (no-op when TrackPlayer unavailable)
+    useTrackPlayerEventsSafe([Event.PlaybackQueueEnded, Event.PlaybackTrackChanged], async (event) => {
+        if (event?.type === Event.PlaybackQueueEnded) {
             console.log('[Player] Queue ended event received');
             await playNext();
-        } else if (event.type === Event.PlaybackTrackChanged) {
+        } else if (event?.type === Event.PlaybackTrackChanged) {
             console.log('[Player] Track changed event');
         }
     });

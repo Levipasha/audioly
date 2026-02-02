@@ -41,8 +41,8 @@ const NowPlayingContext = createContext<NowPlayingContextType | undefined>(undef
 let lastToggleTime = 0;
 const TOGGLE_DEBOUNCE = 800; // ms to ignore status updates after manual toggle
 
-import TrackPlayer, { Event, State, Track } from 'react-native-track-player';
-import { setupPlayer, togglePlayback } from '../components/track-player-service';
+import { getTrackPlayerModule, isTrackPlayerAvailable } from './lazy-track-player';
+import { reset as resetPlayer, setupPlayer, togglePlayback } from './track-player-service';
 import { cleanSearchQuery, identifySong } from '../services/artwork';
 import { metadataFetcher } from '../services/background-metadata';
 import { loadNowPlaying, loadQueue, loadRecent, loadSourceInfo, saveNowPlaying, saveQueue, saveRecent, saveSourceInfo } from './playback-persistence';
@@ -154,7 +154,7 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
     nowPlayingRef.current = nowPlaying;
   }, [nowPlaying]);
 
-  // Initialize Track Player
+  // Initialize Track Player (skip listeners when TrackPlayer failed to load, e.g. New Arch)
   useEffect(() => {
     async function init() {
       const isSetup = await setupPlayer();
@@ -185,6 +185,14 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
     }
     init();
 
+    if (!isTrackPlayerAvailable()) return;
+
+    const mod = getTrackPlayerModule();
+    const TrackPlayer = mod?.default;
+    const Event = mod?.Event;
+    const State = mod?.State;
+    if (!TrackPlayer || !Event || !State) return;
+
     // Listen for state changes
     const subState = TrackPlayer.addEventListener(Event.PlaybackState, async (event: any) => {
       // Modern TrackPlayer (v4+) returns an object { state: State }
@@ -198,7 +206,7 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
     });
 
     // CRITICAL: Listen for track changes to update history automatically
-    const subTrack = TrackPlayer.addEventListener(Event.PlaybackActiveTrackChanged, async (event) => {
+    const subTrack = TrackPlayer.addEventListener(Event.PlaybackActiveTrackChanged, async (event: any) => {
       const track = event.track || await TrackPlayer.getActiveTrack();
 
       if (track) {
@@ -303,6 +311,8 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
 
   const playTrack = async (track: NowPlaying) => {
     if (!track.audio && !track.route) return;
+    const TrackPlayer = getTrackPlayerModule()?.default;
+    if (!TrackPlayer) return;
 
     try {
       const metadata = parseArtistTitle(track.title, track.subtitle);
@@ -346,7 +356,7 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
 
       // Sync the entire queue to TrackPlayer so next/prev works in notification
       const currentQueue = queueRef.current;
-      const playerTracks: Track[] = currentQueue.map(t => {
+      const playerTracks = currentQueue.map(t => {
         const tUrl = typeof t.audio === 'object' && t.audio?.uri ? t.audio.uri : t.audio;
         return {
           id: t.id || t.title,
@@ -396,6 +406,8 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
   };
 
   const playNext = async () => {
+    const TrackPlayer = getTrackPlayerModule()?.default;
+    if (!TrackPlayer) return;
     try {
       await TrackPlayer.skipToNext();
       await TrackPlayer.play();
@@ -410,6 +422,8 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
   };
 
   const playPrev = async () => {
+    const TrackPlayer = getTrackPlayerModule()?.default;
+    if (!TrackPlayer) return;
     try {
       await TrackPlayer.skipToPrevious();
       await TrackPlayer.play();
@@ -432,6 +446,7 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
   };
 
   const setQueueWithPlayer = async (tracks: NowPlaying[]) => {
+    const TrackPlayer = getTrackPlayerModule()?.default;
     // Deduplicate
     const seen = new Set();
     const unique = tracks.filter(t => {
@@ -442,8 +457,9 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
     });
 
     setQueue(unique);
+    if (!TrackPlayer) return;
     try {
-      const playerTracks: Track[] = unique.map(t => {
+      const playerTracks = unique.map(t => {
         const trackUrl = typeof t.audio === 'object' && t.audio?.uri ? t.audio.uri : t.audio;
         return {
           id: t.id || t.title,
@@ -504,7 +520,7 @@ export function NowPlayingProvider({ children }: { children: ReactNode }) {
 
   const clearAll = async () => {
     try {
-      await TrackPlayer.reset();
+      await resetPlayer();
       setNowPlaying(null);
       setQueue([]);
       setSourceHistory([]);

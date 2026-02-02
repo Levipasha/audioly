@@ -1,12 +1,19 @@
 # TurboModule TrackPlayer Compatibility Issue
 
-## Problem
+## Problem (Fixed)
 
-`react-native-track-player` version 4.1.2 has a known incompatibility with React Native's New Architecture (TurboModules). When `newArchEnabled: true`, the app crashes at runtime with:
+`react-native-track-player` version 4.1.2 had an incompatibility with React Native's New Architecture (TurboModules). When `newArchEnabled: true`, the app crashed at runtime with:
 
 ```
 TurboModuleInteropUtils$ParsingException: Unable to parse @ReactMethod annotations from native module: TrackPlayerModule. Details: TurboModule system assumes returnType == void iff the method is synchronous.
 ```
+
+**Cause:** `@ReactMethod` functions used `= scope.launch { ... }`, so their return type was `Job` instead of `void`. TurboModule interop requires synchronous methods to return `void`.
+
+## Fix Applied
+
+- **Patch:** `patches/react-native-track-player+4.1.2.patch`  
+  All `@ReactMethod` functions that used `= scope.launch { ... }` were changed to a block body that returns `void`: `{ scope.launch { ... } }`. The patch is applied automatically on `npm install`.
 
 ## Why We Can't Disable New Architecture
 
@@ -17,8 +24,8 @@ The following packages **require** new architecture to be enabled:
 ## Current Status
 
 - ✅ New architecture is enabled (`newArchEnabled: true`)
-- ⚠️ `react-native-track-player` will cause runtime errors with TurboModules
-- 📝 This is a known issue: https://github.com/doublesymmetry/react-native-track-player/issues/2413
+- ✅ `react-native-track-player` TurboModule error fixed via patch
+- 📝 Upstream issue: https://github.com/doublesymmetry/react-native-track-player/issues/2413
 
 ## Solutions
 

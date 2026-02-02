@@ -1,6 +1,15 @@
-import TrackPlayer, { Event } from 'react-native-track-player';
+// Use lazy loader so requiring this file doesn't crash when TrackPlayer native module fails (e.g. New Arch)
+const { getTrackPlayerModule } = require('./components/lazy-track-player');
 
 module.exports = async function () {
+    const mod = getTrackPlayerModule();
+    if (!mod) {
+        console.warn('[Service] TrackPlayer not available, skipping playback service registration');
+        return;
+    }
+    const TrackPlayer = mod.default;
+    const { Event } = mod;
+
     console.log('[Service] Registering playback service handlers');
 
     // Handle playback control events from notification
