@@ -1,0 +1,12 @@
+diff --git a/node_modules/@missingcore/audio-metadata/package.json b/node_modules/@missingcore/audio-metadata/package.json
+index f61ca9e..81ed952 100644
+--- a/node_modules/@missingcore/audio-metadata/package.json
++++ b/node_modules/@missingcore/audio-metadata/package.json
+@@ -130,6 +130,7 @@
+   "exports": {
+     ".": {
+       "types": "./lib/typescript/index.d.ts",
++      "react-native": "./src/index.ts",
+       "import": "./lib/module/index.mjs"
+     }
+   }
